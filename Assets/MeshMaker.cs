@@ -20,7 +20,7 @@ namespace Yr
             }
         }
 
-        void Clear()
+        public void Clear()
         {
             _vertices.Clear();
             _normals.Clear();

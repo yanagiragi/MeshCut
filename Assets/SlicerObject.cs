@@ -10,9 +10,12 @@ public class SlicerObject : MonoBehaviour
 {
     public GameObject Plane;
 
+    public Material capMaterial;
+
     private Vector3 planeN;
     private float planeD;
 
+    private int _capMatSub = 1;
     MeshMaker leftHandSide = new MeshMaker();
     MeshMaker rightHandSide = new MeshMaker();
 
@@ -28,14 +31,22 @@ public class SlicerObject : MonoBehaviour
 
         if (Input.GetMouseButtonDown(0))
         {
-            Slice(gameObject);
+            GameObject[] sliced = Slice(gameObject, capMaterial);
+
+            foreach(var i in sliced)
+            {
+                i.name = string.Format("{0} ({1})", gameObject.name, i.name);
+            }
+
+            // For Debug
+            gameObject.SetActive(false);
         }
     }
 
-    void Slice(GameObject victim)
+    GameObject[] Slice(GameObject victim, Material capMaterial)
     {
-        Debug.Log("Slice!");
-
+        List<GameObject> sliced = new List<GameObject>();
+        
         Mesh originalMesh = victim.GetComponent<MeshFilter>().mesh;
 
         Vector3[] vertices = originalMesh.vertices;
@@ -104,14 +115,22 @@ public class SlicerObject : MonoBehaviour
                 }
             }
 
-            // TODO: fill the cap
+            Material[] mats = GetComponent<MeshRenderer>().sharedMaterials;
+            
+            if (mats[mats.Length - 1] != capMaterial)
+            {
+                // append capMaterial
+                Material[] newMats = new Material[mats.Length + 1];
+                mats.CopyTo(newMats, 0);
+                newMats[newMats.Length - 1] = capMaterial;
+                mats = newMats;
+            }
+
+            // subMeshIndex for cap
+            CapCut(mats.Length - 1);
 
             Mesh leftHandSideMesh = leftHandSide.GetMesh("Left HandSide Mesh");
             Mesh rightHandSideMesh = rightHandSide.GetMesh("Right HandSide Mesh");
-
-            Material[] mats = GetComponent<MeshRenderer>().sharedMaterials;
-            
-            // TODO: deal cap material
 
             GameObject leftHandSideObject = new GameObject("Left Hand Side", typeof(MeshFilter), typeof(MeshRenderer));
             leftHandSideObject.transform.position = transform.position;
@@ -135,8 +154,168 @@ public class SlicerObject : MonoBehaviour
             rightHandSideObject.GetComponent<MeshFilter>().mesh = rightHandSideMesh;
             rightHandSideObject.GetComponent<MeshRenderer>().materials = mats;
 
-            // For Debug
-            gameObject.SetActive(false);
+            sliced.Add(leftHandSideObject);
+            sliced.Add(rightHandSideObject);
+        }
+
+        leftHandSide.Clear();
+        leftHandSide.Clear();
+        newVerticesCache.Clear();
+
+        return sliced.ToArray();
+    }
+    
+
+    private static List<int> capUsedIndices = new List<int>();
+    private static List<int> capPolygonIndices = new List<int>();
+    void CapCut(int subMeshIndex)
+    {
+        capUsedIndices.Clear();
+        capPolygonIndices.Clear();
+
+        for(int i = 0; i < newVerticesCache.Count; i += 2)
+        {
+            if (!capUsedIndices.Contains(i)) {
+                capPolygonIndices.Clear();
+                capPolygonIndices.Add(i);
+                capPolygonIndices.Add(i + 1);
+
+                capUsedIndices.Add(i);
+                capUsedIndices.Add(i + 1);
+
+                Vector3 connectionPointLeft = newVerticesCache[i];
+                Vector3 connectionPointRight = newVerticesCache[i + 1];
+                bool isDone = false;
+
+                // find next point that chains with current connect point
+                while(isDone == false)
+                {
+                    isDone = true;
+
+                    // loop throught newVerticesCache to find next chain
+                    // if there is no more chain, next loop won't set isDone to false, which escapes the loop
+                    for(int index = 0; index < newVerticesCache.Count; index += 2)
+                    {
+                        // not used point
+                        if (!capUsedIndices.Contains(index))
+                        {
+                            Vector3 newConnectionPointLeft = newVerticesCache[index];
+                            Vector3 newConnectionPointRight = newVerticesCache[index + 1];
+
+                            bool isChained = (
+                                connectionPointLeft == newConnectionPointLeft ||
+                                connectionPointLeft == newConnectionPointRight ||
+                                connectionPointRight == newConnectionPointLeft ||
+                                connectionPointRight == newConnectionPointRight
+                            );
+
+                            if (isChained)
+                            {
+                                capUsedIndices.Add(index);
+                                capUsedIndices.Add(index + 1);
+
+                                if (connectionPointLeft == newConnectionPointLeft)
+                                {
+                                    capPolygonIndices.Insert(0, index + 1);
+                                    connectionPointLeft = newVerticesCache[index + 1];
+                                }
+                                else if (connectionPointLeft == newConnectionPointRight)
+                                {
+                                    capPolygonIndices.Insert(0, index);
+                                    connectionPointLeft = newVerticesCache[index];
+                                }
+                                else if (connectionPointRight == newConnectionPointLeft)
+                                {
+                                    capPolygonIndices.Add(index + 1);
+                                    connectionPointRight = newVerticesCache[index + 1];
+                                }
+                                else if (connectionPointRight == newConnectionPointRight)
+                                {
+                                    capPolygonIndices.Add(index);
+                                    connectionPointRight = newVerticesCache[index];
+                                }
+
+                                isDone = false;
+                            }
+                        }
+                    }
+                }
+
+                // check the loop is closed or not
+                Vector3 startPoint = newVerticesCache[capPolygonIndices[0]];
+                Vector3 endPoint = newVerticesCache[capPolygonIndices[capPolygonIndices.Count - 1]];
+                if (startPoint == endPoint)
+                {
+                    // if start point & end point are same, rename index inorder to make "index" loop
+                    capPolygonIndices[capPolygonIndices.Count - 1] = capPolygonIndices[0];
+                }
+                else
+                {
+                    // connect to start point
+                    capPolygonIndices.Add(capPolygonIndices[0]);
+                }
+
+                FillCap(capPolygonIndices, subMeshIndex);
+            }
+        }
+    }
+
+    void FillCap(List<int> indices, int subMeshIndex)
+    {
+        // compute center
+        Vector3 center = Vector3.zero;
+        foreach(var i in indices) {
+            center += newVerticesCache[i];
+        }
+        center /= indices.Count;
+
+        // rotate plane normal by 90 degrees
+        Vector3 up = new Vector3(planeN.y, -planeN.x, planeN.z);
+        Vector3 left = Vector3.Cross(planeN, up);
+
+        Vector3 displacement = Vector3.zero;
+        Vector2 uv1 = Vector2.zero;
+        Vector2 uv2 = Vector2.zero;
+
+        for (int i = 0; i < indices.Count - 1; ++i)
+        {
+            // Connect every two points to center
+            // TODO: Refactor to connect triangle each by each, that is comsumes two edge and product one edge
+
+            // use displacement to calculate uv
+            displacement = newVerticesCache[indices[i]] - center;
+            uv1.x = Vector3.Dot(displacement, left) + 0.5f;
+            uv1.y = Vector3.Dot(displacement, up) + 0.5f;
+
+            displacement = newVerticesCache[indices[i + 1]] - center;
+            uv2.x = Vector3.Dot(displacement, left) + 0.5f;
+            uv2.y = Vector3.Dot(displacement, up) + 0.5f;
+
+            triangleCache.vertices[0] = newVerticesCache[indices[i]];
+            triangleCache.uvs[0] = uv1;
+            triangleCache.normals[0] = -planeN;
+            triangleCache.tangents[0] = Vector4.zero;
+
+            triangleCache.vertices[1] = newVerticesCache[indices[i + 1]];
+            triangleCache.uvs[1] = uv2;
+            triangleCache.normals[1] = -planeN;
+            triangleCache.tangents[1] = Vector4.zero;
+
+            triangleCache.vertices[2] = center;
+            triangleCache.uvs[2] = new Vector2(0.5f, 0.5f); // since (0.5, 0.5) is the center of uv coordinates
+            triangleCache.normals[2] = -planeN;
+            triangleCache.tangents[2] = Vector4.zero;
+
+            CheckNormal(ref triangleCache);
+            leftHandSide.AddTriangle(triangleCache, subMeshIndex);
+
+            // flip the normal for another cap
+            triangleCache.normals[0] = planeN;
+            triangleCache.normals[1] = planeN;
+            triangleCache.normals[2] = planeN;
+
+            CheckNormal(ref triangleCache);
+            rightHandSide.AddTriangle(triangleCache, subMeshIndex);
         }
     }
 
