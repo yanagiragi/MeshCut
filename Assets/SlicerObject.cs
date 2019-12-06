@@ -13,22 +13,14 @@ public class SlicerObject : MonoBehaviour
     private Vector3 planeN;
     private float planeD;
 
-    private List<Vector3> contactPoints;
+    MeshMaker leftHandSide = new MeshMaker();
+    MeshMaker rightHandSide = new MeshMaker();
 
-    private Mesh originalMesh;
+    // List to store new vertices generate from the slice
+    List<Vector3> newVerticesCache = new List<Vector3>();
 
-    private void Awake()
-    {
-        contactPoints = new List<Vector3>();
-    }
+    Yr.MeshMaker.Triangle triangleCache = new Yr.MeshMaker.Triangle(new Vector3[3], new Vector2[3], new Vector3[3], new Vector4[3]);
 
-    // Start is called before the first frame update
-    void Start()
-    {        
-        originalMesh = GetComponent<MeshFilter>().mesh;
-    }
-
-    // Update is called once per frame
     void Update()
     {
         planeN = Plane.transform.up;
@@ -36,18 +28,15 @@ public class SlicerObject : MonoBehaviour
 
         if (Input.GetMouseButtonDown(0))
         {
-            Slice();
+            Slice(gameObject);
         }
     }
 
-    void Slice()
+    void Slice(GameObject victim)
     {
         Debug.Log("Slice!");
 
-        MeshMaker leftHandSide = new MeshMaker();
-        MeshMaker rightHandSide = new MeshMaker();
-
-        Yr.MeshMaker.Triangle triangleCache = new Yr.MeshMaker.Triangle(new Vector3[3], new Vector2[3], new Vector3[3], new Vector4[3]);
+        Mesh originalMesh = victim.GetComponent<MeshFilter>().mesh;
 
         Vector3[] vertices = originalMesh.vertices;
         Vector3[] normals = originalMesh.normals;
@@ -111,14 +100,18 @@ public class SlicerObject : MonoBehaviour
                 else
                 {
                     // need to deal with cuts
-                    TrianglePlaneIntersect(p1, p2, p3, contactPoints);
+                    CutTriangle(ref triangleCache, subMeshIndex);
                 }
             }
+
+            // TODO: fill the cap
 
             Mesh leftHandSideMesh = leftHandSide.GetMesh("Left HandSide Mesh");
             Mesh rightHandSideMesh = rightHandSide.GetMesh("Right HandSide Mesh");
 
             Material[] mats = GetComponent<MeshRenderer>().sharedMaterials;
+            
+            // TODO: deal cap material
 
             GameObject leftHandSideObject = new GameObject("Left Hand Side", typeof(MeshFilter), typeof(MeshRenderer));
             leftHandSideObject.transform.position = transform.position;
@@ -147,14 +140,265 @@ public class SlicerObject : MonoBehaviour
         }
     }
 
-    private void OnDrawGizmos()
+    Yr.MeshMaker.Triangle leftTriangleCache = new Yr.MeshMaker.Triangle(new Vector3[3], new Vector2[3], new Vector3[3], new Vector4[3]);
+    Yr.MeshMaker.Triangle rightTriangleCache = new Yr.MeshMaker.Triangle(new Vector3[3], new Vector2[3], new Vector3[3], new Vector4[3]);
+    Yr.MeshMaker.Triangle newTriangleCache = new Yr.MeshMaker.Triangle(new Vector3[3], new Vector2[3], new Vector3[3], new Vector4[3]);
+    void CutTriangle(ref Yr.MeshMaker.Triangle triangleCache, int subMeshIndex)
     {
-        if (Application.isPlaying && contactPoints != null && contactPoints.Count > 0)
+        // first, we split three points into two sides
+
+        int leftCount = 0, rightCount = 0;
+
+        for (int i = 0; i < 3; ++i)
         {
-            foreach (var v3 in contactPoints)
+            bool isLeftHandSide = isLeftSideFromPlane(planeN, planeD, triangleCache.vertices[i]);
+
+            if (isLeftHandSide)
             {
-                Gizmos.DrawWireSphere(v3, 0.1f);
+                leftTriangleCache.vertices[leftCount] = triangleCache.vertices[i];
+                leftTriangleCache.uvs[leftCount] = triangleCache.uvs[i];
+                leftTriangleCache.tangents[leftCount] = triangleCache.tangents[i];
+                leftTriangleCache.normals[leftCount] = triangleCache.normals[i];
+                ++leftCount;
             }
+            else
+            {
+                rightTriangleCache.vertices[rightCount] = triangleCache.vertices[i];
+                rightTriangleCache.uvs[rightCount] = triangleCache.uvs[i];
+                rightTriangleCache.tangents[rightCount] = triangleCache.tangents[i];
+                rightTriangleCache.normals[rightCount] = triangleCache.normals[i];
+                ++rightCount;
+            }
+        }
+
+        // Second, we fill the intersect points into newTriangleCache
+        
+        // Get single point that has no other point in the same side
+        if (leftCount == 1)
+        {
+            triangleCache.vertices[0] = leftTriangleCache.vertices[0];
+            triangleCache.uvs[0]      = leftTriangleCache.uvs[0];
+            triangleCache.normals[0]  = leftTriangleCache.normals[0];
+            triangleCache.tangents[0] = leftTriangleCache.tangents[0];
+
+            triangleCache.vertices[1] = rightTriangleCache.vertices[0];
+            triangleCache.uvs[1]      = rightTriangleCache.uvs[0];
+            triangleCache.normals[1]  = rightTriangleCache.normals[0];
+            triangleCache.tangents[1] = rightTriangleCache.tangents[0];
+
+            triangleCache.vertices[2] = rightTriangleCache.vertices[1];
+            triangleCache.uvs[2] = rightTriangleCache.uvs[1];
+            triangleCache.normals[2] = rightTriangleCache.normals[1];
+            triangleCache.tangents[2] = rightTriangleCache.tangents[1];
+        }
+        else
+        {
+            triangleCache.vertices[0] = rightTriangleCache.vertices[0];
+            triangleCache.uvs[0]      = rightTriangleCache.uvs[0];
+            triangleCache.normals[0]  = rightTriangleCache.normals[0];
+            triangleCache.tangents[0] = rightTriangleCache.tangents[0];
+
+            triangleCache.vertices[1] = leftTriangleCache.vertices[0];
+            triangleCache.uvs[1]      = leftTriangleCache.uvs[0];
+            triangleCache.normals[1]  = leftTriangleCache.normals[0];
+            triangleCache.tangents[1] = leftTriangleCache.tangents[0];
+
+            triangleCache.vertices[2] = leftTriangleCache.vertices[1];
+            triangleCache.uvs[2]      = leftTriangleCache.uvs[1];
+            triangleCache.normals[2]  = leftTriangleCache.normals[1];
+            triangleCache.tangents[2] = leftTriangleCache.tangents[1];
+        }
+
+        // Get intersect point
+
+        float d1 = 0.0f, d2 = 0.0f;
+        float normalizedDistance = 0.0f;
+
+        // Deal intersect point 1
+        d1 = DistFromPlane(planeN, planeD, triangleCache.vertices[0]);
+        d2 = DistFromPlane(planeN, planeD, triangleCache.vertices[1]);
+        normalizedDistance = d1 / (d1 - d2);
+        
+        newTriangleCache.vertices[0] = Vector3.Lerp(triangleCache.vertices[0], triangleCache.vertices[1], normalizedDistance);
+        newTriangleCache.uvs[0]      = Vector2.Lerp(triangleCache.uvs[0],      triangleCache.uvs[1],      normalizedDistance);
+        newTriangleCache.normals[0]  = Vector3.Lerp(triangleCache.normals[0],  triangleCache.normals[1],  normalizedDistance);
+        newTriangleCache.tangents[0] = Vector4.Lerp(triangleCache.tangents[0], triangleCache.tangents[1], normalizedDistance);
+
+        // Deal intersect point 2
+        d1 = DistFromPlane(planeN, planeD, triangleCache.vertices[0]);
+        d2 = DistFromPlane(planeN, planeD, triangleCache.vertices[2]);
+        normalizedDistance = d1 / (d1 - d2);
+
+        newTriangleCache.vertices[1] = Vector3.Lerp(triangleCache.vertices[0], triangleCache.vertices[2], normalizedDistance);
+        newTriangleCache.uvs[1]      = Vector2.Lerp(triangleCache.uvs[0],      triangleCache.uvs[2],      normalizedDistance);
+        newTriangleCache.normals[1]  = Vector3.Lerp(triangleCache.normals[0],  triangleCache.normals[2],  normalizedDistance);
+        newTriangleCache.tangents[1] = Vector4.Lerp(triangleCache.tangents[0], triangleCache.tangents[2], normalizedDistance);
+
+        // record new create points
+        if (newTriangleCache.vertices[0] != newTriangleCache.vertices[1])
+        {
+            newVerticesCache.Add(newTriangleCache.vertices[0]);
+            newVerticesCache.Add(newTriangleCache.vertices[1]);
+        }
+
+        // Third, Connect intersect points with vertices
+
+        // Again, Get Single point of the side. But this time we fill different data
+        if (leftCount == 1)
+        {
+            // Connect Triangle: Single, intersect p1, intersect p2
+            triangleCache.vertices[0] = leftTriangleCache.vertices[0];
+            triangleCache.uvs[0]      = leftTriangleCache.uvs[0];
+            triangleCache.normals[0]  = leftTriangleCache.normals[0];
+            triangleCache.tangents[0] = leftTriangleCache.tangents[0];
+
+            triangleCache.vertices[1] = newTriangleCache.vertices[0];
+            triangleCache.uvs[1]      = newTriangleCache.uvs[0];
+            triangleCache.normals[1]  = newTriangleCache.normals[0];
+            triangleCache.tangents[1] = newTriangleCache.tangents[0];
+
+            triangleCache.vertices[2] = newTriangleCache.vertices[1];
+            triangleCache.uvs[2]      = newTriangleCache.uvs[1];
+            triangleCache.normals[2]  = newTriangleCache.normals[1];
+            triangleCache.tangents[2] = newTriangleCache.tangents[1];
+
+            // Check Normal
+            CheckNormal(ref triangleCache);
+
+            leftHandSide.AddTriangle(triangleCache, subMeshIndex);
+
+            // Connect Triangle: other side point 1, intersect p1, intersect p2
+            triangleCache.vertices[0] = rightTriangleCache.vertices[0];
+            triangleCache.uvs[0]      = rightTriangleCache.uvs[0];
+            triangleCache.normals[0]  = rightTriangleCache.normals[0];
+            triangleCache.tangents[0] = rightTriangleCache.tangents[0];
+
+            triangleCache.vertices[1] = newTriangleCache.vertices[0];
+            triangleCache.uvs[1]      = newTriangleCache.uvs[0];
+            triangleCache.normals[1]  = newTriangleCache.normals[0];
+            triangleCache.tangents[1] = newTriangleCache.tangents[0];
+
+            triangleCache.vertices[2] = newTriangleCache.vertices[1];
+            triangleCache.uvs[2]      = newTriangleCache.uvs[1];
+            triangleCache.normals[2]  = newTriangleCache.normals[1];
+            triangleCache.tangents[2] = newTriangleCache.tangents[1];
+
+            // Check Normal
+            CheckNormal(ref triangleCache);
+
+            rightHandSide.AddTriangle(triangleCache, subMeshIndex);
+
+            // Connect Triangle: other side point 1, other side point 2, intersect p2
+            triangleCache.vertices[0] = rightTriangleCache.vertices[0];
+            triangleCache.uvs[0]      = rightTriangleCache.uvs[0];
+            triangleCache.normals[0]  = rightTriangleCache.normals[0];
+            triangleCache.tangents[0] = rightTriangleCache.tangents[0];
+
+            triangleCache.vertices[1] = rightTriangleCache.vertices[1];
+            triangleCache.uvs[1]      = rightTriangleCache.uvs[1];
+            triangleCache.normals[1]  = rightTriangleCache.normals[1];
+            triangleCache.tangents[1] = rightTriangleCache.tangents[1];
+
+            triangleCache.vertices[2] = newTriangleCache.vertices[1];
+            triangleCache.uvs[2]      = newTriangleCache.uvs[1];
+            triangleCache.normals[2]  = newTriangleCache.normals[1];
+            triangleCache.tangents[2] = newTriangleCache.tangents[1];
+
+            // Check Normal
+            CheckNormal(ref triangleCache);
+
+            rightHandSide.AddTriangle(triangleCache, subMeshIndex);
+        }
+        else
+        {
+            // Connect Triangle: Single, intersect p1, intersect p2
+            triangleCache.vertices[0] = rightTriangleCache.vertices[0];
+            triangleCache.uvs[0]      = rightTriangleCache.uvs[0];
+            triangleCache.normals[0]  = rightTriangleCache.normals[0];
+            triangleCache.tangents[0] = rightTriangleCache.tangents[0];
+
+            triangleCache.vertices[1] = newTriangleCache.vertices[0];
+            triangleCache.uvs[1]      = newTriangleCache.uvs[0];
+            triangleCache.normals[1]  = newTriangleCache.normals[0];
+            triangleCache.tangents[1] = newTriangleCache.tangents[0];
+
+            triangleCache.vertices[2] = newTriangleCache.vertices[1];
+            triangleCache.uvs[2]      = newTriangleCache.uvs[1];
+            triangleCache.normals[2]  = newTriangleCache.normals[1];
+            triangleCache.tangents[2] = newTriangleCache.tangents[1];
+
+            // Check Normal
+            CheckNormal(ref triangleCache);
+
+            rightHandSide.AddTriangle(triangleCache, subMeshIndex);
+
+            // Connect Triangle: other side point 1, intersect p1, intersect p2
+            triangleCache.vertices[0] = leftTriangleCache.vertices[0];
+            triangleCache.uvs[0]      = leftTriangleCache.uvs[0];
+            triangleCache.normals[0]  = leftTriangleCache.normals[0];
+            triangleCache.tangents[0] = leftTriangleCache.tangents[0];
+
+            triangleCache.vertices[1] = newTriangleCache.vertices[0];
+            triangleCache.uvs[1]      = newTriangleCache.uvs[0];
+            triangleCache.normals[1]  = newTriangleCache.normals[0];
+            triangleCache.tangents[1] = newTriangleCache.tangents[0];
+
+            triangleCache.vertices[2] = newTriangleCache.vertices[1];
+            triangleCache.uvs[2]      = newTriangleCache.uvs[1];
+            triangleCache.normals[2]  = newTriangleCache.normals[1];
+            triangleCache.tangents[2] = newTriangleCache.tangents[1];
+
+            // Check Normal
+            CheckNormal(ref triangleCache);
+
+            leftHandSide.AddTriangle(triangleCache, subMeshIndex);
+
+            // Connect Triangle: other side point 1, other side point 2, intersect p2
+            triangleCache.vertices[0] = leftTriangleCache.vertices[0];
+            triangleCache.uvs[0]      = leftTriangleCache.uvs[0];
+            triangleCache.normals[0]  = leftTriangleCache.normals[0];
+            triangleCache.tangents[0] = leftTriangleCache.tangents[0];
+
+            triangleCache.vertices[1] = leftTriangleCache.vertices[1];
+            triangleCache.uvs[1]      = leftTriangleCache.uvs[1];
+            triangleCache.normals[1]  = leftTriangleCache.normals[1];
+            triangleCache.tangents[1] = leftTriangleCache.tangents[1];
+
+            triangleCache.vertices[2] = newTriangleCache.vertices[1];
+            triangleCache.uvs[2]      = newTriangleCache.uvs[1];
+            triangleCache.normals[2]  = newTriangleCache.normals[1];
+            triangleCache.tangents[2] = newTriangleCache.tangents[1];
+
+            // Check Normal
+            CheckNormal(ref triangleCache);
+
+            leftHandSide.AddTriangle(triangleCache, subMeshIndex);
+        }
+    }
+
+    void CheckNormal(ref Yr.MeshMaker.Triangle triangleCache)
+    {
+        Vector3 crossProduct = Vector3.Cross(triangleCache.vertices[1] - triangleCache.vertices[0], triangleCache.vertices[2] - triangleCache.vertices[0]);
+        Vector3 averageNormal = (triangleCache.normals[0] + triangleCache.normals[1] + triangleCache.normals[2]) / 3.0f;
+        float dotProduct = Vector3.Dot(averageNormal, crossProduct);
+        if (dotProduct < 0)
+        {
+            // swap index 0 and index 2
+            Vector3 temp = triangleCache.vertices[2];
+            triangleCache.vertices[2] = triangleCache.vertices[0];
+            triangleCache.vertices[0] = temp;
+
+            temp = triangleCache.normals[2];
+            triangleCache.normals[2] = triangleCache.normals[0];
+            triangleCache.normals[0] = temp;
+
+            Vector2 temp2 = triangleCache.uvs[2];
+            triangleCache.uvs[2] = triangleCache.uvs[0];
+            triangleCache.uvs[0] = temp2;
+
+            Vector4 temp3 = triangleCache.tangents[2];
+            triangleCache.tangents[2] = triangleCache.tangents[0];
+            triangleCache.tangents[0] = temp3;
         }
     }
 
@@ -166,44 +410,6 @@ public class SlicerObject : MonoBehaviour
     bool isLeftSideFromPlane(Vector3 planeN, float planeD, Vector3 point)
     {
         return (Vector3.Dot(planeN, point) + planeD) > 0.0f;
-    }
-
-    void GetSegmentPlaneIntersect(Vector3 p1, Vector3 p2, List<Vector3> result)
-    {
-        float d1 = DistFromPlane(planeN, planeD, p1);
-        float d2 = DistFromPlane(planeN, planeD, p2);
-
-        bool p1OnPlane = Mathf.Abs(d1) < Mathf.Epsilon;
-        bool p2OnPlane = Mathf.Abs(d2) < Mathf.Epsilon;
-
-        if (p1OnPlane)
-        {
-            result.Add(p1);
-        }
-
-        if (p2OnPlane)
-        {
-            result.Add(p2);
-        }
-
-        if (p1OnPlane && p2OnPlane)
-        {
-            return;
-        }
-
-        if (d1 * d2 > Mathf.Epsilon) {
-            return ;
-        }
-                
-        float t = d1 / (d1 - d2);
-        result.Add(p1 + t * (p2 - p1));
-    }
-
-    void TrianglePlaneIntersect(Vector3 p1, Vector3 p2, Vector3 p3, List<Vector3> result)
-    {
-        GetSegmentPlaneIntersect(p1, p2, result);
-        GetSegmentPlaneIntersect(p2, p3, result);
-        GetSegmentPlaneIntersect(p3, p1, result);
     }
     
 }
