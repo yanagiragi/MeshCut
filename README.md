@@ -20,7 +20,7 @@
 https://github.com/BLINDED-AM-ME/UnityAssets
 
 * 比較完整的方案
-https://github.com/DavidArayan/ezy-slice/tree/master/EzySlice
+https://github.com/DavidArayan/ezy-slice
 
 * Triangle Plane Intersection 原理的解釋
 https://stackoverflow.com/questions/3142469/determining-the-intersection-of-a-triangle-and-a-plane
